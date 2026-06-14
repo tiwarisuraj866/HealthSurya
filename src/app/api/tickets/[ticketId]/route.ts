@@ -18,7 +18,7 @@ async function loadContext(clerkId: string, ticketId: string) {
     db.from("tickets").select("*").eq("id", ticketId).maybeSingle(),
   ]);
   const isAdmin = profile && ["admin", "super_admin", "support"].includes(profile.role);
-  const isOwner = ticket && ticket.created_by_clerk_id === clerkId;
+  const isOwner = ticket && profile && ticket.creator_id === profile.id;
   return { db, profile, ticket, isAdmin, isOwner, allowed: !!ticket && (isAdmin || isOwner) };
 }
 
@@ -27,11 +27,33 @@ export async function GET(_req: Request, ctx: { params: Promise<{ ticketId: stri
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { ticketId } = await ctx.params;
   const { db, ticket, allowed, isAdmin } = await loadContext(userId, ticketId);
-  if (!allowed) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!allowed || !ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { data: messages } = await db
     .from("ticket_messages").select("*").eq("ticket_id", ticketId).order("created_at", { ascending: true });
-  return NextResponse.json({ ticket, messages: messages ?? [], isAdmin: !!isAdmin });
+  
+  const mappedTicket = {
+    ...ticket,
+    subject: ticket.title,
+    ticket_no: ticket.id.slice(0, 8),
+  };
+
+  const mappedMessages = (messages ?? []).map((m: any) => {
+    let sender_role = "user";
+    if (m.sender_id === null) {
+      sender_role = "ai";
+    } else if (m.sender_id !== ticket.creator_id) {
+      sender_role = "admin";
+    }
+    return {
+      id: m.id,
+      sender_role,
+      body: m.message,
+      created_at: m.created_at,
+    };
+  });
+
+  return NextResponse.json({ ticket: mappedTicket, messages: mappedMessages, isAdmin: !!isAdmin });
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ ticketId: string }> }) {
@@ -39,7 +61,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ ticketId: stri
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { ticketId } = await ctx.params;
   const { db, profile, ticket, allowed, isAdmin } = await loadContext(userId, ticketId);
-  if (!allowed) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!allowed || !ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
   const message = String(body.message ?? "").trim().slice(0, 4000);
@@ -47,9 +69,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ ticketId: stri
 
   await db.from("ticket_messages").insert({
     ticket_id: ticketId,
-    sender_role: isAdmin && !(ticket.created_by_clerk_id === userId) ? "admin" : "user",
-    sender_profile_id: profile?.id ?? null,
-    body: message,
+    sender_id: profile?.id ?? null,
+    message: message,
   });
 
   // A user reply reopens resolved/closed tickets; any reply bumps updated_at.
@@ -67,7 +88,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ ticketId: str
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { ticketId } = await ctx.params;
   const { db, profile, ticket, allowed, isAdmin, isOwner } = await loadContext(userId, ticketId);
-  if (!allowed) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!allowed || !ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
   const status = String(body.status ?? "");
@@ -81,13 +102,17 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ ticketId: str
 
   if (status === "resolved") {
     const { data: ownerProfile } = await db
-      .from("profiles").select("*").eq("clerk_user_id", ticket.created_by_clerk_id).maybeSingle();
-    await notify({
-      profileId: ownerProfile?.id, clerkUserId: ticket.created_by_clerk_id, email: ownerProfile?.email,
-      event: "ticket_resolved", title: `Ticket #${ticket.ticket_no} resolved`, body: ticket.subject, link: "/support",
-      emailEvent: "ticket_resolved",
-      emailVars: { name: ownerProfile?.full_name, ticketNo: ticket.ticket_no, subject: ticket.subject },
-    });
+      .from("profiles").select("*").eq("id", ticket.creator_id).maybeSingle();
+    const ticketNo = ticket.id.slice(0, 8);
+    const subject = ticket.title;
+    if (ownerProfile) {
+      await notify({
+        profileId: ownerProfile.id, clerkUserId: ownerProfile.clerk_user_id, email: ownerProfile.email,
+        event: "ticket_resolved", title: `Ticket #${ticketNo} resolved`, body: subject, link: "/support",
+        emailEvent: "ticket_resolved",
+        emailVars: { name: ownerProfile.full_name, ticketNo, subject },
+      });
+    }
   }
 
   return NextResponse.json({ ok: true });

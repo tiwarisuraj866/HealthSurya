@@ -34,9 +34,8 @@ async function getProfile(clerkId: string) {
 }
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const profile = await getProfile(userId);
+  const { userId } = await auth().catch(() => ({ userId: null }));
+  const profile = userId ? await getProfile(userId) : null;
 
   const body = await req.json().catch(() => ({}));
   const messages: { role: string; content: string }[] = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
@@ -48,35 +47,46 @@ export async function POST(req: Request) {
   if (wantsTicket) {
     const db = supabaseAdmin as any;
     const subject = (body.subject || lastUser || "Support request via AI assistant").slice(0, 140);
+    const visitorInfo = !userId && (body.name || body.email)
+      ? `\n\n[Visitor Info]\nName: ${body.name || "N/A"}\nEmail: ${body.email || "N/A"}`
+      : "";
+    const description = `Conversation escalated from HealthSurya AI Assistant.${visitorInfo}`;
+
     const { data: ticket, error } = await db
       .from("tickets")
       .insert({
-        profile_id: profile?.id ?? null,
-        created_by_clerk_id: userId,
-        subject,
+        creator_id: profile?.id ?? null,
+        title: subject,
+        description,
         category: body.category && ["appointment","lab_test","payment","verification","technical","general"].includes(body.category) ? body.category : "general",
-        source: "ai_escalation",
+        status: "open",
       })
       .select()
       .single();
     if (!error && ticket) {
       const transcript = messages.map((m) => `${m.role === "user" ? "User" : "AI"}: ${m.content}`).join("\n").slice(0, 4000);
       await db.from("ticket_messages").insert({
-        ticket_id: ticket.id, sender_role: "ai",
-        body: `Conversation escalated from HealthSurya AI Assistant.\n\n--- Transcript ---\n${transcript}`,
+        ticket_id: ticket.id,
+        sender_id: profile?.id ?? null,
+        message: `Conversation escalated from HealthSurya AI Assistant.\n\n--- Transcript ---\n${transcript}`,
       });
-      await audit({ actorProfileId: profile?.id, actorClerkId: userId, actorRole: profile?.role, action: "ai.escalate_ticket", entity: "tickets", entityId: ticket.id });
-      await notify({
-        profileId: profile?.id, clerkUserId: userId, email: profile?.email,
-        event: "ticket_created", title: `Ticket #${ticket.ticket_no} created`,
-        body: subject, link: "/support",
-        emailEvent: "ticket_created",
-        emailVars: { name: profile?.full_name, ticketNo: ticket.ticket_no, subject },
-      });
+      
+      const ticketNo = ticket.id.slice(0, 8);
+      
+      if (profile?.id) {
+        await audit({ actorProfileId: profile.id, actorClerkId: userId, actorRole: profile.role, action: "ai.escalate_ticket", entity: "tickets", entityId: ticket.id });
+        await notify({
+          profileId: profile.id, clerkUserId: userId, email: profile.email,
+          event: "ticket_created", title: `Ticket #${ticketNo} created`,
+          body: subject, link: "/support",
+          emailEvent: "ticket_created",
+          emailVars: { name: profile.full_name, ticketNo, subject },
+        });
+      }
       return NextResponse.json({
-        reply: `I've created support ticket **#${ticket.ticket_no}** for you and shared our conversation with the team. You can track it and chat with support at /support. Anything else I can help with?`,
+        reply: `I've created support ticket **#${ticketNo}** for you and shared our conversation with the team. You can track it and chat with support at /support. Anything else I can help with?`,
         ticketId: ticket.id,
-        ticketNo: ticket.ticket_no,
+        ticketNo: ticketNo,
       });
     }
     return NextResponse.json({ reply: "I couldn't create the ticket just now. Please try again from the Support page (/support)." });
@@ -109,10 +119,12 @@ If you cannot resolve an issue, offer to escalate to a support ticket.`,
 
       // Persist conversation (best-effort)
       try {
-        await (supabaseAdmin as any).from("ai_conversations").insert({
-          profile_id: profile?.id ?? null, clerk_user_id: userId, role_context: roleCtx,
-          messages: [...messages, { role: "assistant", content: reply }],
-        });
+        if (profile?.id) {
+          await (supabaseAdmin as any).from("ai_conversations").insert({
+            profile_id: profile.id, clerk_user_id: userId, role_context: roleCtx,
+            messages: [...messages, { role: "assistant", content: reply }],
+          });
+        }
       } catch { /* non-fatal */ }
 
       return NextResponse.json({ reply });

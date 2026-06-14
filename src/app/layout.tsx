@@ -8,7 +8,7 @@ import { Footer } from "@/components/Footer";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { Toaster } from "@/components/ui/sonner";
 import { CustomerAlertsStrip } from "@/components/CustomerAlertsStrip";
-import { AiAssistant } from "@/components/AiAssistant";
+import HealthSuryaSupportChat from "@/components/HealthSuryaSupportChat";
 import { TesterPanel } from "@/components/TesterPanel";
 import "./globals.css";
 
@@ -44,7 +44,7 @@ export default function RootLayout({
                 <Footer />
                 <MobileBottomNav />
               </div>
-              <AiAssistant />
+              <HealthSuryaSupportChat />
               <TesterPanel />
               <Toaster
                 richColors
