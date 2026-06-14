@@ -1,0 +1,3 @@
+console.log("CLERK_PUBLISHABLE_KEY:", process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+console.log("SUPABASE_URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+console.log("INTERNAL_API_SECRET:", process.env.INTERNAL_API_SECRET);

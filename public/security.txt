@@ -1,0 +1,3 @@
+Contact: security@healthsurya.com
+Preferred-Languages: en
+Policy: https://healthsurya.com/contact

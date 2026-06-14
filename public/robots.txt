@@ -1,0 +1,24 @@
+User-agent: *
+Allow: /
+Allow: /doctors/
+Allow: /labs
+Allow: /medicine
+Allow: /legal
+
+Disallow: /dashboard
+Disallow: /bookings
+Disallow: /orders
+Disallow: /wallet
+Disallow: /verify
+Disallow: /admin
+Disallow: /lab-setup
+Disallow: /lab-manage
+Disallow: /doctor-setup
+Disallow: /doctor-manage
+Disallow: /medicine-cart
+Disallow: /medicine-checkout
+Disallow: /health-check
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://healthsurya.com/sitemap.xml
